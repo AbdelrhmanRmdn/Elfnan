@@ -12,6 +12,9 @@ const {
 const {
   spawn,
 } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const {
   AudioPlayerStatus,
   NoSubscriberBehavior,
@@ -29,6 +32,18 @@ const token = process.env.DISCORD_TOKEN;
 if (!token) {
   console.error('Missing DISCORD_TOKEN. Add it to your .env file.');
   process.exit(1);
+}
+
+let youtubeCookiesPath = null;
+if (process.env.YOUTUBE_COOKIES_BASE64) {
+  const cookies = Buffer.from(process.env.YOUTUBE_COOKIES_BASE64.trim(), 'base64').toString('utf8').replace(/^\uFEFF/, '');
+  const firstLine = cookies.split(/\r?\n/, 1)[0];
+  if (!['# Netscape HTTP Cookie File', '# HTTP Cookie File'].includes(firstLine)) {
+    console.error('YOUTUBE_COOKIES_BASE64 must contain a base64-encoded Netscape cookies.txt file.');
+    process.exit(1);
+  }
+  youtubeCookiesPath = path.join(os.tmpdir(), `elfnan-youtube-cookies-${process.pid}.txt`);
+  fs.writeFileSync(youtubeCookiesPath, cookies, { mode: 0o600 });
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
@@ -69,6 +84,7 @@ async function findTracks(query, limit = 10) {
     noWarnings: true,
     skipDownload: true,
     socketTimeout: 12,
+    ...(youtubeCookiesPath ? { cookies: youtubeCookiesPath } : {}),
   });
   return (results.entries ?? []).map(normalizeTrack).filter(track => track.url && track.title);
 }
@@ -190,11 +206,14 @@ function normalizeTrack(track) {
   };
 }
 
-function createTrackStream(url) {
-  const extractor = spawn(ytdlp.constants.YOUTUBE_DL_PATH, [
+function createTrackStream(url, onExtractorError) {
+  const extractorArgs = [
     '--quiet', '--no-warnings', '--no-playlist', '--format', 'bestaudio',
-    '--output', '-', '--socket-timeout', '15', '--', url,
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    '--output', '-', '--socket-timeout', '15',
+  ];
+  if (youtubeCookiesPath) extractorArgs.push('--cookies', youtubeCookiesPath);
+  extractorArgs.push('--', url);
+  const extractor = spawn(ytdlp.constants.YOUTUBE_DL_PATH, extractorArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
   const transcoder = spawn(ffmpegPath, [
     '-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-map', '0:a:0', '-vn',
     '-c:a', 'libopus', '-b:a', '128k', '-f', 'ogg', 'pipe:1',
@@ -213,7 +232,11 @@ function createTrackStream(url) {
   extractor.on('error', error => console.error('yt-dlp process error:', error.message));
   transcoder.on('error', error => console.error('FFmpeg process error:', error.message));
   extractor.on('close', code => {
-    if (code && code !== 0) console.error('yt-dlp could not read the audio:', extractorError.trim());
+    if (code && code !== 0) {
+      const details = extractorError.trim();
+      console.error('yt-dlp could not read the audio:', details);
+      onExtractorError?.(details);
+    }
   });
   transcoder.on('close', code => {
     if (code && code !== 0) console.error('FFmpeg could not transcode the audio:', ffmpegError.trim());
@@ -334,7 +357,12 @@ async function startNext(guildId) {
   queue.history = queue.history.slice(-10);
   if (queue.autoplay && queue.autoplayArtist !== track.channel?.name) void prefetchAutoplay(queue, track);
   try {
-    const stream = createTrackStream(track.url);
+    const stream = createTrackStream(track.url, details => {
+      const message = /sign in to confirm.*not a bot/i.test(details)
+        ? 'YouTube is blocking Railway’s server IP. Add a fresh `YOUTUBE_COOKIES_BASE64` variable in Railway, redeploy, and try again.'
+        : `The audio source failed. Check the Railway logs for details: ${details.slice(0, 300)}`;
+      queue.textChannel?.send(message).catch(() => {});
+    });
     queue.processes = stream.processes;
     const resource = createAudioResource(stream.stream, {
       inputType: StreamType.OggOpus,
@@ -445,7 +473,13 @@ async function handlePlay(interaction) {
       if (cached && Date.now() - cached.savedAt < 5 * 60_000) {
         track = cached.track;
       } else {
-        const info = await ytdlp(input, { dumpSingleJson: true, noWarnings: true, skipDownload: true, noPlaylist: true });
+        const info = await ytdlp(input, {
+          dumpSingleJson: true,
+          noWarnings: true,
+          skipDownload: true,
+          noPlaylist: true,
+          ...(youtubeCookiesPath ? { cookies: youtubeCookiesPath } : {}),
+        });
         track = normalizeTrack(info);
       }
     } else {

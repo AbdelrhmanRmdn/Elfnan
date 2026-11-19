@@ -29,3 +29,9 @@ A Discord music bot with YouTube search autocomplete, a per-server song queue, a
 The now-playing panel has buttons for previous, pause/resume, skip, likes, and stop. Search results are shown as autocomplete choices as you type.
 
 Queues are kept in memory, so they reset if the bot process restarts. YouTube search and playback use `yt-dlp` with FFmpeg for audio streaming.
+
+## Railway YouTube cookies
+
+Some cloud server IPs are blocked by YouTube with a “Sign in to confirm you’re not a bot” message. If that happens, export a Netscape-format YouTube cookies file, encode it as base64, and set it in Railway as `YOUTUBE_COOKIES_BASE64`. The bot writes the secret to a private temporary file at startup and passes it to yt-dlp. Never commit the cookies file, put the value in GitHub, or send it in chat; it can grant access to the signed-in account. Use a separate account if you choose to use cookies, since yt-dlp’s documentation warns that account use can carry a ban risk.
+
+To encode a local cookies file, run `node -e "process.stdout.write(require('fs').readFileSync('/path/to/cookies.txt').toString('base64'))"` in a terminal, then paste that output only into Railway’s Variables page. Treat the encoded output as a secret too. Redeploy after setting the variable. YouTube can rotate cookies and may bind verification to an IP, so this method is not guaranteed to work from a cloud host.
