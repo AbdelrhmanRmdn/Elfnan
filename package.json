@@ -1,0 +1,20 @@
+{
+  "name": "elfnan-music-bot",
+  "version": "1.0.0",
+  "description": "A Discord music bot with YouTube search autocomplete and per-server queues.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.22.1",
+    "dotenv": "^16.6.1",
+    "ffmpeg-static": "^5.3.0",
+    "youtube-dl-exec": "^3.1.19"
+  }
+}
