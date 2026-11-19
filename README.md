@@ -5,7 +5,7 @@ A Discord music bot with YouTube search autocomplete, a per-server song queue, a
 ## Requirements
 
 - Node.js 22.12 or newer
-- Python 3.9 or newer available as `python3` (used by the yt-dlp wrapper)
+- Python 3.11 or newer available as `python3` (used by the yt-dlp wrapper)
 - A Discord application and bot created in the [Discord Developer Portal](https://discord.com/developers/applications)
 - The bot invited with the `bot` and `applications.commands` scopes and permission to View Channels, Send Messages, Connect, and Speak
 

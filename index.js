@@ -23,7 +23,7 @@ const {
   VoiceConnectionStatus,
 } = require('@discordjs/voice');
 const ytdlp = require('youtube-dl-exec');
-const ffmpegPath = require('ffmpeg-static');
+const ffmpegPath = require('ffmpeg-static') || 'ffmpeg';
 
 const token = process.env.DISCORD_TOKEN;
 if (!token) {
