@@ -1,5 +1,6 @@
 .env
 .env.*
+*cookie*.txt
 node_modules
 .git
 .npm

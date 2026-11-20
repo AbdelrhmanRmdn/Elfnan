@@ -211,7 +211,6 @@ function createTrackStream(url, onExtractorError) {
     // Prefer audio-only, but fall back to a combined format when YouTube
     // doesn't expose a separate audio-only format to this server.
     '--quiet', '--no-warnings', '--no-playlist', '--format', 'bestaudio/best',
-    '--extractor-args', 'youtube:player_client=web_safari',
     '--output', '-', '--socket-timeout', '15',
   ];
   if (youtubeCookiesPath) extractorArgs.push('--cookies', youtubeCookiesPath);
@@ -363,9 +362,11 @@ async function startNext(guildId) {
     const stream = createTrackStream(track.url, details => {
       const message = /sign in to confirm.*not a bot/i.test(details)
         ? youtubeCookiesPath
-          ? 'YouTube rejected the saved login cookies. Refresh the YouTube cookies, replace `YOUTUBE_COOKIES_BASE64` in Railway, then redeploy. Moving to another cloud host may not help because YouTube can block its IP too.'
-          : 'YouTube rejected playback from this cloud server. Add `YOUTUBE_COOKIES_BASE64` in Railway using a fresh YouTube cookies file, then redeploy. Moving to another cloud host may not help because YouTube can block its IP too.'
-        : `The audio source failed. Check the Railway logs for details: ${details.slice(0, 300)}`;
+          ? 'YouTube rejected the saved cookies. Try another video, or remove the cookies setting and play from your usual network.'
+          : 'YouTube blocked playback from this network. Try another video or play from a network YouTube accepts.'
+        : /requested format is not available/i.test(details)
+          ? 'YouTube did not provide a playable audio format for that video. Try another search result.'
+          : `The audio source failed: ${details.slice(0, 300)}`;
       queue.textChannel?.send(message).catch(() => {});
     });
     queue.processes = stream.processes;
@@ -403,6 +404,7 @@ function createQueue(interaction, voiceChannel) {
     player,
     connection,
     ready: null,
+    connectFailed: false,
     textChannel: interaction.channel,
     starting: false,
   };
@@ -419,7 +421,8 @@ function createQueue(interaction, voiceChannel) {
   });
   player.on('error', error => {
     console.error('Audio player error:', error.message);
-    void startNext(interaction.guildId);
+    // AudioPlayer returns to Idle after a stream error; its Idle handler
+    // advances the queue, so advancing here as well could skip two tracks.
   });
   return queue;
 }
@@ -467,9 +470,21 @@ async function handlePlay(interaction) {
   if (!queue) {
     queue = createQueue(interaction, voiceChannel);
     createdQueue = true;
-    await interaction.editReply('Joining your voice channel and loading the song…');
   }
   const connectionReady = queue.ready ?? Promise.resolve(true);
+  if (createdQueue) {
+    void connectionReady.then(async connected => {
+      if (connected || queues.get(interaction.guildId) !== queue) return;
+      queue.connectFailed = true;
+      stopTrackProcesses(queue);
+      queue.tracks.length = 0;
+      queue.current = null;
+      queue.player.stop(true);
+      leaveVoice(queue);
+      queues.delete(interaction.guildId);
+      await interaction.editReply('I couldn’t connect to your voice channel. Check that I have permission to Connect and Speak.').catch(() => {});
+    });
+  }
 
   try {
     let track;
@@ -483,6 +498,7 @@ async function handlePlay(interaction) {
           noWarnings: true,
           skipDownload: true,
           noPlaylist: true,
+          socketTimeout: 12,
           ...(youtubeCookiesPath ? { cookies: youtubeCookiesPath } : {}),
         });
         track = normalizeTrack(info);
@@ -503,7 +519,7 @@ async function handlePlay(interaction) {
       return interaction.editReply('I couldn’t find that song. Try another search or a YouTube URL.');
     }
 
-    if (!await connectionReady) {
+    if (queue.connectFailed || queues.get(interaction.guildId) !== queue) {
       if (!queue.current && queue.tracks.length === 0) {
         leaveVoice(queue);
         queues.delete(interaction.guildId);
@@ -642,8 +658,16 @@ client.login(token).catch(error => {
   process.exit(1);
 });
 
-process.on('SIGINT', () => {
-  for (const queue of queues.values()) leaveVoice(queue);
+function shutdown() {
+  for (const queue of queues.values()) {
+    clearTimeout(queue.leaveTimer);
+    stopTrackProcesses(queue);
+    leaveVoice(queue);
+  }
   client.destroy();
+  if (youtubeCookiesPath) fs.rmSync(youtubeCookiesPath, { force: true });
   process.exit(0);
-});
+}
+
+process.once('SIGINT', shutdown);
+process.once('SIGTERM', shutdown);
