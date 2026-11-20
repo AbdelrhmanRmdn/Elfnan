@@ -208,7 +208,10 @@ function normalizeTrack(track) {
 
 function createTrackStream(url, onExtractorError) {
   const extractorArgs = [
-    '--quiet', '--no-warnings', '--no-playlist', '--format', 'bestaudio',
+    // Prefer audio-only, but fall back to a combined format when YouTube
+    // doesn't expose a separate audio-only format to this server.
+    '--quiet', '--no-warnings', '--no-playlist', '--format', 'bestaudio/best',
+    '--extractor-args', 'youtube:player_client=web_safari',
     '--output', '-', '--socket-timeout', '15',
   ];
   if (youtubeCookiesPath) extractorArgs.push('--cookies', youtubeCookiesPath);
@@ -359,7 +362,9 @@ async function startNext(guildId) {
   try {
     const stream = createTrackStream(track.url, details => {
       const message = /sign in to confirm.*not a bot/i.test(details)
-        ? 'YouTube is blocking Railway’s server IP. Add a fresh `YOUTUBE_COOKIES_BASE64` variable in Railway, redeploy, and try again.'
+        ? youtubeCookiesPath
+          ? 'YouTube rejected the saved login cookies. Refresh the YouTube cookies, replace `YOUTUBE_COOKIES_BASE64` in Railway, then redeploy. Moving to another cloud host may not help because YouTube can block its IP too.'
+          : 'YouTube rejected playback from this cloud server. Add `YOUTUBE_COOKIES_BASE64` in Railway using a fresh YouTube cookies file, then redeploy. Moving to another cloud host may not help because YouTube can block its IP too.'
         : `The audio source failed. Check the Railway logs for details: ${details.slice(0, 300)}`;
       queue.textChannel?.send(message).catch(() => {});
     });
